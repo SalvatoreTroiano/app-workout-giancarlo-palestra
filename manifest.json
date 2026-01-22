@@ -1,0 +1,24 @@
+{
+  "name": "Workout Planner",
+  "short_name": "Workout",
+  "description": "Workout Planner - Personal Training Program",
+  "start_url": "/app-workout-giancarlo-palestra/",
+  "scope": "/app-workout-giancarlo-palestra/",
+  "display": "standalone",
+  "background_color": "#020617",
+  "theme_color": "#ea580c",
+  "icons": [
+    {
+      "src": "icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}
+
+
