@@ -4,24 +4,112 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <link rel="manifest" href="manifest.json">
+    <meta name="theme-color" content="#020617">
     <title>Workout Planner</title>
     <script src="https://cdn.tailwindcss.com"></script>
 </head>
 
 <body class="min-h-screen bg-gradient-to-br from-gray-900 via-blue-900 to-gray-900 p-6">
     <script>
-    if ('serviceWorker' in navigator) {
-      window.addEventListener('load', () => {
-        navigator.serviceWorker.register(
-          '/app-workout-giancarlo-palestra/service-worker.js'
-        );
-      });
+    // Controllo per svuotare la cache se è passato un giorno
+    const CACHE_KEY = 'workout-planner-cache-date';
+    const ONE_DAY = 24 * 60 * 60 * 1000; // 24 ore in millisecondi
+    
+    function checkAndClearCache() {
+        const lastCacheClear = localStorage.getItem(CACHE_KEY);
+        const now = Date.now();
+        
+        // Se non c'è data precedente o è passato più di un giorno, pulisci la cache
+        if (!lastCacheClear || (now - parseInt(lastCacheClear)) > ONE_DAY) {
+            console.log('Pulizia cache giornaliera...');
+            
+            // Pulisci localStorage (ma mantieni i dati utente)
+            const userState = localStorage.getItem('workout-planner-state');
+            
+            // Pulisci tutto il localStorage tranne lo stato utente
+            localStorage.clear();
+            
+            // Ripristina lo stato utente se esisteva
+            if (userState) {
+                localStorage.setItem('workout-planner-state', userState);
+            }
+            
+            // Salva la data dell'ultima pulizia
+            localStorage.setItem(CACHE_KEY, now.toString());
+            
+            // Pulisci sessionStorage
+            sessionStorage.clear();
+            
+            // Pulisci la cache del service worker
+            if ('caches' in window) {
+                caches.keys().then(function(names) {
+                    for (let name of names) {
+                        caches.delete(name);
+                        console.log('Cache eliminata:', name);
+                    }
+                });
+            }
+            
+            // Forza il refresh della pagina per caricare le risorse fresche
+            setTimeout(() => {
+                window.location.reload(true);
+            }, 500);
+        }
     }
+    
+    // Esegui il controllo al caricamento della pagina
+    checkAndClearCache();
+    
+    // Registra il service worker
+    // Nel tuo index.html, aggiorna questa parte:
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    // Percorso corretto per GitHub Pages
+    const swPath = '/app-workout-giancarlo-palestra/service-worker.js';
+    
+    navigator.serviceWorker.register(swPath)
+      .then(registration => {
+        console.log('ServiceWorker registrato con successo:', registration);
+        
+        // Ascolta i messaggi dal service worker
+        navigator.serviceWorker.addEventListener('message', event => {
+          if (event.data.type === 'SW_ACTIVATED') {
+            console.log('Service Worker attivato con cache:', event.data.cacheName);
+          }
+        });
+        
+        // Controlla aggiornamenti ogni ora
+        setInterval(() => {
+          registration.update();
+        }, 60 * 60 * 1000);
+        
+        // Pulisci cache ogni 24 ore
+        setInterval(() => {
+          checkAndClearCache();
+          
+          // Comunica al service worker di pulire la cache
+          if (registration.active) {
+            registration.active.postMessage({ type: 'CLEAR_CACHE' });
+          }
+        }, ONE_DAY);
+      })
+      .catch(error => {
+        console.log('Registrazione ServiceWorker fallita:', error);
+      });
+  });
+}
   </script>
+  
   <div class="max-w-6xl mx-auto" id="app">
     <div class="bg-gradient-to-br from-blue-600 via-blue-700 to-blue-800 rounded-xl shadow-2xl p-8 mb-6 border-2 border-blue-400/30">
       <h1 class="text-4xl font-black text-white mb-2 text-center tracking-tight">💪 WORKOUT PLANNER</h1>
       <p class="text-blue-100 text-center font-semibold">Personal Training Program</p>
+      
+      <!-- Notifica cache -->
+      <div id="cacheNotification" class="hidden mt-4 p-3 bg-blue-900/50 border border-blue-500 rounded-lg text-center">
+        <p class="text-blue-200 text-sm">🔄 Cache aggiornata per le risorse più recenti</p>
+      </div>
+      
       <div class="grid md:grid-cols-2 gap-6 mt-6">
         <div>
           <label class="block text-sm font-bold text-white mb-2 uppercase tracking-wide">🏃 Atleta</label>
@@ -59,6 +147,11 @@
         </svg>
         Genera PDF
       </button>
+      
+      <!-- Pulsante per forzare aggiornamento cache -->
+      <button id="forceUpdateBtn" class="mt-4 text-sm text-blue-300 hover:text-blue-100 underline cursor-pointer">
+        Aggiorna risorse ora
+      </button>
     </div>
   </div>
 
@@ -89,9 +182,86 @@ const logoInput = document.getElementById('logoInput');
 const logoPreview = document.getElementById('logoPreview');
 const logoPreviewWrap = document.getElementById('logoPreviewWrap');
 const generatePDFBtn = document.getElementById('generatePDFBtn');
+const cacheNotification = document.getElementById('cacheNotification');
+const forceUpdateBtn = document.getElementById('forceUpdateBtn');
+
+// Controlla se c'è uno stato salvato e caricalo
+function loadSavedState() {
+  const savedState = localStorage.getItem('workout-planner-state');
+  if (savedState) {
+    try {
+      const parsed = JSON.parse(savedState);
+      state.clientName = parsed.clientName || '';
+      state.logo = parsed.logo || '';
+      state.weeks = parsed.weeks || state.weeks;
+      
+      // Aggiorna UI
+      clientNameInput.value = state.clientName;
+      if (state.logo) {
+        logoPreview.src = state.logo;
+        logoPreviewWrap.classList.remove('hidden');
+      }
+    } catch (e) {
+      console.error('Errore nel caricamento dello stato:', e);
+      // Se c'è un errore, pulisci lo stato corrotto
+      localStorage.removeItem('workout-planner-state');
+    }
+  }
+}
+
+// Salva lo stato quando ci sono cambiamenti
+function saveState() {
+  try {
+    localStorage.setItem('workout-planner-state', JSON.stringify(state));
+  } catch (e) {
+    console.error('Errore nel salvataggio dello stato:', e);
+  }
+}
+
+// Mostra notifica cache e la nasconde dopo 3 secondi
+function showCacheNotification() {
+  const cacheCleared = sessionStorage.getItem('cache-cleared');
+  if (cacheCleared) {
+    cacheNotification.classList.remove('hidden');
+    setTimeout(() => {
+      cacheNotification.classList.add('hidden');
+      sessionStorage.removeItem('cache-cleared');
+    }, 3000);
+  }
+}
+
+// Funzione per forzare aggiornamento cache
+function forceCacheUpdate() {
+  localStorage.removeItem(CACHE_KEY);
+  sessionStorage.setItem('cache-cleared', 'true');
+  
+  if ('caches' in window) {
+    caches.keys().then(function(names) {
+      for (let name of names) {
+        caches.delete(name);
+        console.log('Cache forzatamente eliminata:', name);
+      }
+    });
+  }
+  
+  // Ricarica la pagina
+  setTimeout(() => {
+    window.location.reload(true);
+  }, 1000);
+}
+
+// Inizializzazione
+loadSavedState();
+showCacheNotification();
+
+// Controlla se la cache è stata appena pulita
+if (performance.navigation.type === 1) { // Tipo 1 = reload
+  sessionStorage.setItem('cache-cleared', 'true');
+}
 
 clientNameInput.addEventListener('input', (e) => {
   state.clientName = e.target.value;
+  saveState();
 });
 
 logoInput.addEventListener('change', (e) => {
@@ -102,9 +272,13 @@ logoInput.addEventListener('change', (e) => {
     state.logo = ev.target.result;
     logoPreview.src = state.logo;
     logoPreviewWrap.classList.remove('hidden');
+    saveState();
   };
   reader.readAsDataURL(file);
 });
+
+// Pulsante forzato aggiornamento cache
+forceUpdateBtn.addEventListener('click', forceCacheUpdate);
 
 function createIconPlus() {
   const svg = document.createElementNS('http://www.w3.org/2000/svg','svg');
@@ -244,15 +418,18 @@ function renderWeeks() {
 function addExercise(weekIndex, dayIndex) {
   const newExercise = { id: Date.now(), name: '', sets: '', reps: '', rest: '', notes: '' };
   state.weeks[weekIndex].days[dayIndex].exercises.push(newExercise);
+  saveState();
   renderWeeks();
 }
 
 function updateExercise(weekIndex, dayIndex, exerciseIndex, field, value) {
   state.weeks[weekIndex].days[dayIndex].exercises[exerciseIndex][field] = value;
+  saveState();
 }
 
 function removeExercise(weekIndex, dayIndex, exerciseIndex) {
   state.weeks[weekIndex].days[dayIndex].exercises.splice(exerciseIndex, 1);
+  saveState();
   renderWeeks();
 }
 

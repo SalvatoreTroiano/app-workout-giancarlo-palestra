@@ -1,20 +1,213 @@
-const CACHE_NAME = 'workout-giancarlo-v3';
+// service-worker.js
+const CACHE_VERSION = 'v4';
+const CACHE_NAME = `workout-giancarlo-${CACHE_VERSION}-${new Date().toISOString().split('T')[0]}`;
+const MAX_CACHE_AGE = 24 * 60 * 60 * 1000; // 24 ore
 
-
+// Risorse da mettere in cache
 const FILES_TO_CACHE = [
   '/app-workout-giancarlo-palestra/',
   '/app-workout-giancarlo-palestra/index.html',
-  '/app-workout-giancarlo-palestra/manifest.json'
+  '/app-workout-giancarlo-palestra/manifest.json',
+  'https://cdn.tailwindcss.com'
 ];
 
+// Installa il Service Worker
 self.addEventListener('install', event => {
+  console.log(`Service Worker ${CACHE_NAME}: Installato`);
+  
   event.waitUntil(
-    caches.open(CACHE_NAME).then(cache => cache.addAll(FILES_TO_CACHE))
+    caches.open(CACHE_NAME)
+      .then(cache => {
+        console.log('Service Worker: Mettendo in cache le risorse');
+        return cache.addAll(FILES_TO_CACHE);
+      })
+      .then(() => {
+        // Forza l'attivazione immediata del nuovo service worker
+        return self.skipWaiting();
+      })
+      .catch(error => {
+        console.error('Errore durante l\'installazione:', error);
+      })
   );
 });
 
-self.addEventListener('fetch', event => {
-  event.respondWith(
-    caches.match(event.request).then(r => r || fetch(event.request))
+// Attiva il Service Worker e pulisci le vecchie cache
+self.addEventListener('activate', event => {
+  console.log(`Service Worker ${CACHE_NAME}: Attivato`);
+  
+  event.waitUntil(
+    caches.keys().then(cacheNames => {
+      return Promise.all(
+        cacheNames.map(cacheName => {
+          // Elimina tutte le cache che non sono quella corrente
+          if (!cacheName.includes(CACHE_NAME)) {
+            console.log(`Service Worker: Rimozione vecchia cache ${cacheName}`);
+            return caches.delete(cacheName);
+          }
+        })
+      );
+    })
+    .then(() => {
+      // Prendi il controllo di tutti i client
+      return self.clients.claim();
+    })
+    .then(() => {
+      // Invia messaggio alla pagina principale per notificare l'attivazione
+      return self.clients.matchAll().then(clients => {
+        clients.forEach(client => {
+          client.postMessage({
+            type: 'SW_ACTIVATED',
+            cacheName: CACHE_NAME
+          });
+        });
+      });
+    })
   );
 });
+
+// Intercetta le richieste
+self.addEventListener('fetch', event => {
+  const requestUrl = event.request.url;
+  
+  // Non cache le richieste di stampa PDF, blob o richieste non GET
+  if (requestUrl.includes('blob:') || 
+      event.request.method !== 'GET' ||
+      requestUrl.includes('chrome-extension://') ||
+      requestUrl.includes('safari-extension://') ||
+      requestUrl.includes('moz-extension://')) {
+    return;
+  }
+
+  event.respondWith(
+    caches.match(event.request)
+      .then(cachedResponse => {
+        // Se la risorsa è in cache, restituiscila
+        if (cachedResponse) {
+          // Controlla se la cache è vecchia per le risorse esterne
+          const isExternalResource = requestUrl.includes('//') && !requestUrl.includes(self.location.origin);
+          const cacheDate = new Date();
+          
+          // Per le risorse esterne o se la cache è molto vecchia, fai una nuova richiesta
+          if (isExternalResource) {
+            return fetchAndUpdateCache(event.request);
+          }
+          
+          return cachedResponse;
+        }
+        
+        // Altrimenti fai la richiesta e metti in cache
+        return fetchAndUpdateCache(event.request);
+      })
+      .catch(error => {
+        console.error('Fetch error:', error);
+        // Fallback per la homepage
+        if (event.request.mode === 'navigate') {
+          return caches.match('/app-workout-giancarlo-palestra/index.html');
+        }
+        return new Response('Network error happened', {
+          status: 408,
+          headers: { 'Content-Type': 'text/plain' },
+        });
+      })
+  );
+});
+
+// Funzione per fetch e aggiornamento cache
+function fetchAndUpdateCache(request) {
+  return fetch(request)
+    .then(response => {
+      // Controlla se la risposta è valida
+      if (!response || response.status !== 200 || response.type !== 'basic') {
+        return response;
+      }
+
+      // Clona la risposta per metterla in cache
+      const responseToCache = response.clone();
+
+      // Metti in cache solo se è della stessa origine o risorse importanti
+      const requestUrl = request.url;
+      const isSameOrigin = requestUrl.startsWith(self.location.origin);
+      const isImportantResource = FILES_TO_CACHE.some(url => 
+        requestUrl.includes(url.replace('https://cdn.tailwindcss.com', '')) ||
+        requestUrl === url
+      );
+
+      if (isSameOrigin || isImportantResource) {
+        caches.open(CACHE_NAME)
+          .then(cache => {
+            cache.put(request, responseToCache);
+          })
+          .catch(error => {
+            console.warn('Cache put failed:', error);
+          });
+      }
+
+      return response;
+    })
+    .catch(error => {
+      console.error('Fetch fallito:', error);
+      throw error;
+    });
+}
+
+// Gestisci i messaggi dalla pagina principale
+self.addEventListener('message', event => {
+  if (event.data && event.data.type === 'CLEAR_CACHE') {
+    console.log('Ricevuto comando per pulire la cache');
+    
+    caches.keys().then(cacheNames => {
+      return Promise.all(
+        cacheNames.map(cacheName => {
+          console.log(`Pulizia cache: ${cacheName}`);
+          return caches.delete(cacheName);
+        })
+      );
+    }).then(() => {
+      // Notifica che la cache è stata pulita
+      event.ports && event.ports[0] && event.ports[0].postMessage({ 
+        type: 'CACHE_CLEARED' 
+      });
+    });
+  }
+  
+  if (event.data && event.data.type === 'SKIP_WAITING') {
+    self.skipWaiting();
+  }
+  
+  if (event.data && event.data.type === 'GET_CACHE_INFO') {
+    caches.keys().then(cacheNames => {
+      event.ports && event.ports[0] && event.ports[0].postMessage({
+        type: 'CACHE_INFO',
+        cacheNames: cacheNames,
+        currentCache: CACHE_NAME
+      });
+    });
+  }
+});
+
+// Controllo automatico per cache vecchia (ogni 6 ore)
+self.addEventListener('periodicsync', event => {
+  if (event.tag === 'cleanup-old-cache') {
+    event.waitUntil(cleanupOldCaches());
+  }
+});
+
+async function cleanupOldCaches() {
+  const cacheNames = await caches.keys();
+  const now = Date.now();
+  
+  for (const cacheName of cacheNames) {
+    // Estrai la data dal nome della cache
+    const cacheDateMatch = cacheName.match(/(\d{4}-\d{2}-\d{2})/);
+    if (cacheDateMatch) {
+      const cacheDate = new Date(cacheDateMatch[1]);
+      const age = now - cacheDate.getTime();
+      
+      // Elimina cache più vecchie di 48 ore
+      if (age > 2 * MAX_CACHE_AGE) {
+        await caches.delete(cacheName);
+        console.log(`Cache automaticamente eliminata (troppo vecchia): ${cacheName}`);
+      }
+    }
+  }
+}
