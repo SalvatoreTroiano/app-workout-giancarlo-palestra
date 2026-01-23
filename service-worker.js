@@ -1,7 +1,6 @@
 // service-worker.js
 const CACHE_VERSION = 'v4';
 const CACHE_NAME = `workout-giancarlo-${CACHE_VERSION}-${new Date().toISOString().split('T')[0]}`;
-const MAX_CACHE_AGE = 24 * 60 * 60 * 1000; // 24 ore
 
 // Risorse da mettere in cache
 const FILES_TO_CACHE = [
@@ -83,72 +82,54 @@ self.addEventListener('fetch', event => {
       .then(cachedResponse => {
         // Se la risorsa è in cache, restituiscila
         if (cachedResponse) {
-          // Controlla se la cache è vecchia per le risorse esterne
-          const isExternalResource = requestUrl.includes('//') && !requestUrl.includes(self.location.origin);
-          const cacheDate = new Date();
-          
-          // Per le risorse esterne o se la cache è molto vecchia, fai una nuova richiesta
-          if (isExternalResource) {
-            return fetchAndUpdateCache(event.request);
-          }
-          
           return cachedResponse;
         }
         
         // Altrimenti fai la richiesta e metti in cache
-        return fetchAndUpdateCache(event.request);
-      })
-      .catch(error => {
-        console.error('Fetch error:', error);
-        // Fallback per la homepage
-        if (event.request.mode === 'navigate') {
-          return caches.match('/app-workout-giancarlo-palestra/index.html');
-        }
-        return new Response('Network error happened', {
-          status: 408,
-          headers: { 'Content-Type': 'text/plain' },
-        });
+        return fetch(event.request)
+          .then(response => {
+            // Controlla se la risposta è valida
+            if (!response || response.status !== 200 || response.type !== 'basic') {
+              return response;
+            }
+
+            // Clona la risposta per metterla in cache
+            const responseToCache = response.clone();
+
+            // Metti in cache solo se è della stessa origine o risorse importanti
+            const requestUrl = event.request.url;
+            const isSameOrigin = requestUrl.startsWith(self.location.origin);
+            const isImportantResource = FILES_TO_CACHE.some(url => 
+              requestUrl.includes(url.replace('https://cdn.tailwindcss.com', '')) ||
+              requestUrl === url
+            );
+
+            if (isSameOrigin || isImportantResource) {
+              caches.open(CACHE_NAME)
+                .then(cache => {
+                  cache.put(event.request, responseToCache);
+                })
+                .catch(error => {
+                  console.warn('Cache put failed:', error);
+                });
+            }
+
+            return response;
+          })
+          .catch(error => {
+            console.error('Fetch fallito:', error);
+            // Fallback per la homepage
+            if (event.request.mode === 'navigate') {
+              return caches.match('/app-workout-giancarlo-palestra/index.html');
+            }
+            return new Response('Network error happened', {
+              status: 408,
+              headers: { 'Content-Type': 'text/plain' },
+            });
+          });
       })
   );
 });
-
-// Funzione per fetch e aggiornamento cache
-function fetchAndUpdateCache(request) {
-  return fetch(request)
-    .then(response => {
-      // Controlla se la risposta è valida
-      if (!response || response.status !== 200 || response.type !== 'basic') {
-        return response;
-      }
-
-      // Clona la risposta per metterla in cache
-      const responseToCache = response.clone();
-
-      // Metti in cache solo se è della stessa origine o risorse importanti
-      const requestUrl = request.url;
-      const isSameOrigin = requestUrl.startsWith(self.location.origin);
-      const isImportantResource = FILES_TO_CACHE.some(url => 
-        requestUrl.includes(url.replace('https://cdn.tailwindcss.com', '')) ||
-        requestUrl === url
-      );
-
-      if (isSameOrigin || isImportantResource) {
-        caches.open(CACHE_NAME)
-          .then(cache => {
-            cache.put(request, responseToCache);
-          })
-          .catch(error => {
-            console.warn('Cache put failed:', error);
-          });
-      }
-
-      return response;
-    })
-    .catch(error => {
-      console.error('Fetch fallito:', error);
-      throw error;
-    });
-}
 
 // Gestisci i messaggi dalla pagina principale
 self.addEventListener('message', event => {
@@ -173,41 +154,4 @@ self.addEventListener('message', event => {
   if (event.data && event.data.type === 'SKIP_WAITING') {
     self.skipWaiting();
   }
-  
-  if (event.data && event.data.type === 'GET_CACHE_INFO') {
-    caches.keys().then(cacheNames => {
-      event.ports && event.ports[0] && event.ports[0].postMessage({
-        type: 'CACHE_INFO',
-        cacheNames: cacheNames,
-        currentCache: CACHE_NAME
-      });
-    });
-  }
 });
-
-// Controllo automatico per cache vecchia (ogni 6 ore)
-self.addEventListener('periodicsync', event => {
-  if (event.tag === 'cleanup-old-cache') {
-    event.waitUntil(cleanupOldCaches());
-  }
-});
-
-async function cleanupOldCaches() {
-  const cacheNames = await caches.keys();
-  const now = Date.now();
-  
-  for (const cacheName of cacheNames) {
-    // Estrai la data dal nome della cache
-    const cacheDateMatch = cacheName.match(/(\d{4}-\d{2}-\d{2})/);
-    if (cacheDateMatch) {
-      const cacheDate = new Date(cacheDateMatch[1]);
-      const age = now - cacheDate.getTime();
-      
-      // Elimina cache più vecchie di 48 ore
-      if (age > 2 * MAX_CACHE_AGE) {
-        await caches.delete(cacheName);
-        console.log(`Cache automaticamente eliminata (troppo vecchia): ${cacheName}`);
-      }
-    }
-  }
-}

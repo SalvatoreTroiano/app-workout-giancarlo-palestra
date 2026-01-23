@@ -11,696 +11,661 @@
 
 <body class="min-h-screen bg-gradient-to-br from-gray-900 via-blue-900 to-gray-900 p-6">
     <script>
-    // Controllo per svuotare la cache se è passato un giorno
-    const CACHE_KEY = 'workout-planner-cache-date';
-    const ONE_DAY = 24 * 60 * 60 * 1000; // 24 ore in millisecondi
-    
-    function checkAndClearCache() {
-        const lastCacheClear = localStorage.getItem(CACHE_KEY);
-        const now = Date.now();
-        
-        // Se non c'è data precedente o è passato più di un giorno, pulisci la cache
-        if (!lastCacheClear || (now - parseInt(lastCacheClear)) > ONE_DAY) {
-            console.log('Pulizia cache giornaliera...');
+    // Registra il service worker
+    if ('serviceWorker' in navigator) {
+        window.addEventListener('load', () => {
+            // Percorso corretto per GitHub Pages
+            const swPath = '/app-workout-giancarlo-palestra/service-worker.js';
             
-            // Pulisci localStorage (ma mantieni i dati utente)
-            const userState = localStorage.getItem('workout-planner-state');
+            navigator.serviceWorker.register(swPath)
+            .then(registration => {
+                console.log('ServiceWorker registrato con successo:', registration);
+                
+                // Ascolta i messaggi dal service worker
+                navigator.serviceWorker.addEventListener('message', event => {
+                    if (event.data.type === 'SW_ACTIVATED') {
+                        console.log('Service Worker attivato con cache:', event.data.cacheName);
+                    }
+                });
+                
+                // Controlla aggiornamenti ogni ora
+                setInterval(() => {
+                    registration.update();
+                }, 60 * 60 * 1000);
+            })
+            .catch(error => {
+                console.log('Registrazione ServiceWorker fallita:', error);
+            });
+        });
+    }
+    </script>
+  
+    <div class="max-w-6xl mx-auto" id="app">
+        <div class="bg-gradient-to-br from-blue-600 via-blue-700 to-blue-800 rounded-xl shadow-2xl p-8 mb-6 border-2 border-blue-400/30">
+            <h1 class="text-4xl font-black text-white mb-2 text-center tracking-tight">💪 WORKOUT PLANNER</h1>
+            <p class="text-blue-100 text-center font-semibold">Personal Training Program</p>
             
-            // Pulisci tutto il localStorage tranne lo stato utente
-            localStorage.clear();
+            <!-- Notifica cache -->
+            <div id="cacheNotification" class="hidden mt-4 p-3 bg-blue-900/50 border border-blue-500 rounded-lg text-center">
+                <p class="text-blue-200 text-sm">🔄 Cache aggiornata per le risorse più recenti</p>
+            </div>
             
-            // Ripristina lo stato utente se esisteva
-            if (userState) {
-                localStorage.setItem('workout-planner-state', userState);
+            <div class="grid md:grid-cols-2 gap-6 mt-6">
+                <div>
+                    <label class="block text-sm font-bold text-white mb-2 uppercase tracking-wide">🏃 Atleta</label>
+                    <input id="clientName" type="text" class="w-full px-4 py-3 bg-white border-2 border-blue-400 rounded-lg focus:border-blue-500 focus:outline-none font-semibold text-lg text-gray-800" placeholder="Nome dell'atleta" />
+                </div>
+                <div>
+                    <label class="block text-sm font-bold text-white mb-2 uppercase tracking-wide">🎯 Logo PT</label>
+                    <label for="logoInput" id="uploadLabel" class="flex items-center justify-center w-full px-4 py-3 bg-white/20 border-2 border-white/40 border-dashed rounded-lg cursor-pointer hover:bg-white/30 transition">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                            <polyline points="17 8 12 3 7 8"></polyline>
+                            <line x1="12" y1="3" x2="12" y2="15"></line>
+                        </svg>
+                        <span class="text-sm text-white font-semibold ml-2">Upload Logo</span>
+                        <input id="logoInput" type="file" accept="image/*" class="hidden" />
+                    </label>
+                </div>
+            </div>
+            <div id="logoPreviewWrap" class="hidden flex gap-6 mt-6 pt-6 border-t border-white/30">
+                <div class="text-center mx-auto">
+                    <p class="text-sm text-white font-semibold mb-2">Preview Logo</p>
+                    <img id="logoPreview" alt="Logo" class="max-w-32 max-h-20 mx-auto border-2 border-white/50 rounded bg-white/10 p-2" />
+                </div>
+            </div>
+        </div>
+
+        <div id="weeksContainer"></div>
+
+        <div class="text-center">
+            <button id="generatePDFBtn" class="inline-flex items-center gap-3 px-10 py-5 bg-gradient-to-r from-blue-600 to-blue-700 text-white text-xl font-black rounded-xl hover:from-blue-700 hover:to-blue-800 transition shadow-2xl uppercase tracking-wide border-2 border-blue-400/30">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                    <polyline points="7 10 12 15 17 10"></polyline>
+                    <line x1="12" y1="15" x2="12" y2="3"></line>
+                </svg>
+                Genera PDF
+            </button>
+            
+            <!-- Pulsante per forzare aggiornamento cache -->
+            <button id="forceUpdateBtn" class="mt-4 text-sm text-blue-300 hover:text-blue-100 underline cursor-pointer">
+                Aggiorna risorse ora
+            </button>
+            
+            <!-- Pulsante per resettare i dati -->
+            <button id="resetDataBtn" class="mt-4 ml-4 text-sm text-red-300 hover:text-red-100 underline cursor-pointer">
+                Resetta tutti i dati
+            </button>
+        </div>
+    </div>
+
+    <script>
+        // Dati iniziali
+        const state = {
+            clientName: '',
+            logo: '',
+            weeks: [
+                {
+                    id: 1,
+                    days: [
+                        { id: 1, name: 'Lunedì', exercises: [] },
+                        { id: 2, name: 'Martedì', exercises: [] },
+                        { id: 3, name: 'Mercoledì', exercises: [] },
+                        { id: 4, name: 'Giovedì', exercises: [] },
+                        { id: 5, name: 'Venerdì', exercises: [] },
+                        { id: 6, name: 'Sabato', exercises: [] },
+                        { id: 7, name: 'Extra', exercises: [] }
+                    ]
+                }
+            ]
+        };
+
+        const weeksContainer = document.getElementById('weeksContainer');
+        const clientNameInput = document.getElementById('clientName');
+        const logoInput = document.getElementById('logoInput');
+        const logoPreview = document.getElementById('logoPreview');
+        const logoPreviewWrap = document.getElementById('logoPreviewWrap');
+        const generatePDFBtn = document.getElementById('generatePDFBtn');
+        const cacheNotification = document.getElementById('cacheNotification');
+        const forceUpdateBtn = document.getElementById('forceUpdateBtn');
+        const resetDataBtn = document.getElementById('resetDataBtn');
+
+        // Controlla se c'è uno stato salvato e caricalo (usa sessionStorage)
+        function loadSavedState() {
+            const savedState = sessionStorage.getItem('workout-planner-state');
+            if (savedState) {
+                try {
+                    const parsed = JSON.parse(savedState);
+                    state.clientName = parsed.clientName || '';
+                    state.logo = parsed.logo || '';
+                    state.weeks = parsed.weeks || state.weeks;
+                    
+                    // Aggiorna UI
+                    clientNameInput.value = state.clientName;
+                    if (state.logo) {
+                        logoPreview.src = state.logo;
+                        logoPreviewWrap.classList.remove('hidden');
+                    }
+                } catch (e) {
+                    console.error('Errore nel caricamento dello stato:', e);
+                    // Se c'è un errore, pulisci lo stato corrotto
+                    sessionStorage.removeItem('workout-planner-state');
+                }
             }
-            
-            // Salva la data dell'ultima pulizia
-            localStorage.setItem(CACHE_KEY, now.toString());
-            
-            // Pulisci sessionStorage
-            sessionStorage.clear();
-            
-            // Pulisci la cache del service worker
+        }
+
+        // Salva lo stato quando ci sono cambiamenti (usa sessionStorage)
+        function saveState() {
+            try {
+                sessionStorage.setItem('workout-planner-state', JSON.stringify(state));
+            } catch (e) {
+                console.error('Errore nel salvataggio dello stato:', e);
+            }
+        }
+
+        // Funzione per resettare completamente i dati
+        function resetAllData() {
+            if (confirm('Sei sicuro di voler resettare tutti i dati? Tutti gli esercizi verranno cancellati.')) {
+                // Resetta lo stato
+                state.clientName = '';
+                state.logo = '';
+                state.weeks = [
+                    {
+                        id: 1,
+                        days: [
+                            { id: 1, name: 'Lunedì', exercises: [] },
+                            { id: 2, name: 'Martedì', exercises: [] },
+                            { id: 3, name: 'Mercoledì', exercises: [] },
+                            { id: 4, name: 'Giovedì', exercises: [] },
+                            { id: 5, name: 'Venerdì', exercises: [] },
+                            { id: 6, name: 'Sabato', exercises: [] },
+                            { id: 7, name: 'Extra', exercises: [] }
+                        ]
+                    }
+                ];
+                
+                // Pulisci sessionStorage
+                sessionStorage.clear();
+                
+                // Reset UI
+                clientNameInput.value = '';
+                logoPreview.src = '';
+                logoPreviewWrap.classList.add('hidden');
+                logoInput.value = '';
+                
+                // Rerender
+                renderWeeks();
+                
+                // Mostra conferma
+                alert('Dati resettati con successo!');
+            }
+        }
+
+        // Funzione per forzare aggiornamento cache
+        function forceCacheUpdate() {
             if ('caches' in window) {
                 caches.keys().then(function(names) {
                     for (let name of names) {
                         caches.delete(name);
-                        console.log('Cache eliminata:', name);
+                        console.log('Cache forzatamente eliminata:', name);
                     }
                 });
             }
             
-            // Forza il refresh della pagina per caricare le risorse fresche
+            // Ricarica la pagina
             setTimeout(() => {
                 window.location.reload(true);
-            }, 500);
+            }, 1000);
         }
-    }
-    
-    // Esegui il controllo al caricamento della pagina
-    checkAndClearCache();
-    
-    // Registra il service worker
-    // Nel tuo index.html, aggiorna questa parte:
-if ('serviceWorker' in navigator) {
-  window.addEventListener('load', () => {
-    // Percorso corretto per GitHub Pages
-    const swPath = '/app-workout-giancarlo-palestra/service-worker.js';
-    
-    navigator.serviceWorker.register(swPath)
-      .then(registration => {
-        console.log('ServiceWorker registrato con successo:', registration);
-        
-        // Ascolta i messaggi dal service worker
-        navigator.serviceWorker.addEventListener('message', event => {
-          if (event.data.type === 'SW_ACTIVATED') {
-            console.log('Service Worker attivato con cache:', event.data.cacheName);
-          }
+
+        // Inizializzazione
+        loadSavedState();
+
+        clientNameInput.addEventListener('input', (e) => {
+            state.clientName = e.target.value;
+            saveState();
         });
+
+        logoInput.addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = (ev) => {
+                state.logo = ev.target.result;
+                logoPreview.src = state.logo;
+                logoPreviewWrap.classList.remove('hidden');
+                saveState();
+            };
+            reader.readAsDataURL(file);
+        });
+
+        // Pulsante forzato aggiornamento cache
+        forceUpdateBtn.addEventListener('click', forceCacheUpdate);
         
-        // Controlla aggiornamenti ogni ora
-        setInterval(() => {
-          registration.update();
-        }, 60 * 60 * 1000);
-        
-        // Pulisci cache ogni 24 ore
-        setInterval(() => {
-          checkAndClearCache();
-          
-          // Comunica al service worker di pulire la cache
-          if (registration.active) {
-            registration.active.postMessage({ type: 'CLEAR_CACHE' });
-          }
-        }, ONE_DAY);
-      })
-      .catch(error => {
-        console.log('Registrazione ServiceWorker fallita:', error);
-      });
-  });
-}
-  </script>
-  
-  <div class="max-w-6xl mx-auto" id="app">
-    <div class="bg-gradient-to-br from-blue-600 via-blue-700 to-blue-800 rounded-xl shadow-2xl p-8 mb-6 border-2 border-blue-400/30">
-      <h1 class="text-4xl font-black text-white mb-2 text-center tracking-tight">💪 WORKOUT PLANNER</h1>
-      <p class="text-blue-100 text-center font-semibold">Personal Training Program</p>
-      
-      <!-- Notifica cache -->
-      <div id="cacheNotification" class="hidden mt-4 p-3 bg-blue-900/50 border border-blue-500 rounded-lg text-center">
-        <p class="text-blue-200 text-sm">🔄 Cache aggiornata per le risorse più recenti</p>
-      </div>
-      
-      <div class="grid md:grid-cols-2 gap-6 mt-6">
-        <div>
-          <label class="block text-sm font-bold text-white mb-2 uppercase tracking-wide">🏃 Atleta</label>
-          <input id="clientName" type="text" class="w-full px-4 py-3 bg-white border-2 border-blue-400 rounded-lg focus:border-blue-500 focus:outline-none font-semibold text-lg text-gray-800" placeholder="Nome dell'atleta" />
-        </div>
-        <div>
-          <label class="block text-sm font-bold text-white mb-2 uppercase tracking-wide">🎯 Logo PT</label>
-          <label for="logoInput" id="uploadLabel" class="flex items-center justify-center w-full px-4 py-3 bg-white/20 border-2 border-white/40 border-dashed rounded-lg cursor-pointer hover:bg-white/30 transition">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
-              <polyline points="17 8 12 3 7 8"></polyline>
-              <line x1="12" y1="3" x2="12" y2="15"></line>
-            </svg>
-            <span class="text-sm text-white font-semibold ml-2">Upload Logo</span>
-            <input id="logoInput" type="file" accept="image/*" class="hidden" />
-          </label>
-        </div>
-      </div>
-      <div id="logoPreviewWrap" class="hidden flex gap-6 mt-6 pt-6 border-t border-white/30">
-        <div class="text-center mx-auto">
-          <p class="text-sm text-white font-semibold mb-2">Preview Logo</p>
-          <img id="logoPreview" alt="Logo" class="max-w-32 max-h-20 mx-auto border-2 border-white/50 rounded bg-white/10 p-2" />
-        </div>
-      </div>
-    </div>
+        // Pulsante reset dati
+        resetDataBtn.addEventListener('click', resetAllData);
 
-    <div id="weeksContainer"></div>
-
-    <div class="text-center">
-      <button id="generatePDFBtn" class="inline-flex items-center gap-3 px-10 py-5 bg-gradient-to-r from-blue-600 to-blue-700 text-white text-xl font-black rounded-xl hover:from-blue-700 hover:to-blue-800 transition shadow-2xl uppercase tracking-wide border-2 border-blue-400/30">
-        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
-          <polyline points="7 10 12 15 17 10"></polyline>
-          <line x1="12" y1="15" x2="12" y2="3"></line>
-        </svg>
-        Genera PDF
-      </button>
-      
-      <!-- Pulsante per forzare aggiornamento cache -->
-      <button id="forceUpdateBtn" class="mt-4 text-sm text-blue-300 hover:text-blue-100 underline cursor-pointer">
-        Aggiorna risorse ora
-      </button>
-    </div>
-  </div>
-
-<script>
-// Dati iniziali
-const state = {
-  clientName: '',
-  logo: '',
-  weeks: [
-    {
-      id: 1,
-      days: [
-        { id: 1, name: 'Lunedì', exercises: [] },
-        { id: 2, name: 'Martedì', exercises: [] },
-        { id: 3, name: 'Mercoledì', exercises: [] },
-        { id: 4, name: 'Giovedì', exercises: [] },
-        { id: 5, name: 'Venerdì', exercises: [] },
-        { id: 6, name: 'Sabato', exercises: [] },
-        { id: 7, name: 'Extra', exercises: [] }
-      ]
-    }
-  ]
-};
-
-const weeksContainer = document.getElementById('weeksContainer');
-const clientNameInput = document.getElementById('clientName');
-const logoInput = document.getElementById('logoInput');
-const logoPreview = document.getElementById('logoPreview');
-const logoPreviewWrap = document.getElementById('logoPreviewWrap');
-const generatePDFBtn = document.getElementById('generatePDFBtn');
-const cacheNotification = document.getElementById('cacheNotification');
-const forceUpdateBtn = document.getElementById('forceUpdateBtn');
-
-// Controlla se c'è uno stato salvato e caricalo
-function loadSavedState() {
-  const savedState = localStorage.getItem('workout-planner-state');
-  if (savedState) {
-    try {
-      const parsed = JSON.parse(savedState);
-      state.clientName = parsed.clientName || '';
-      state.logo = parsed.logo || '';
-      state.weeks = parsed.weeks || state.weeks;
-      
-      // Aggiorna UI
-      clientNameInput.value = state.clientName;
-      if (state.logo) {
-        logoPreview.src = state.logo;
-        logoPreviewWrap.classList.remove('hidden');
-      }
-    } catch (e) {
-      console.error('Errore nel caricamento dello stato:', e);
-      // Se c'è un errore, pulisci lo stato corrotto
-      localStorage.removeItem('workout-planner-state');
-    }
-  }
-}
-
-// Salva lo stato quando ci sono cambiamenti
-function saveState() {
-  try {
-    localStorage.setItem('workout-planner-state', JSON.stringify(state));
-  } catch (e) {
-    console.error('Errore nel salvataggio dello stato:', e);
-  }
-}
-
-// Mostra notifica cache e la nasconde dopo 3 secondi
-function showCacheNotification() {
-  const cacheCleared = sessionStorage.getItem('cache-cleared');
-  if (cacheCleared) {
-    cacheNotification.classList.remove('hidden');
-    setTimeout(() => {
-      cacheNotification.classList.add('hidden');
-      sessionStorage.removeItem('cache-cleared');
-    }, 3000);
-  }
-}
-
-// Funzione per forzare aggiornamento cache
-function forceCacheUpdate() {
-  localStorage.removeItem(CACHE_KEY);
-  sessionStorage.setItem('cache-cleared', 'true');
-  
-  if ('caches' in window) {
-    caches.keys().then(function(names) {
-      for (let name of names) {
-        caches.delete(name);
-        console.log('Cache forzatamente eliminata:', name);
-      }
-    });
-  }
-  
-  // Ricarica la pagina
-  setTimeout(() => {
-    window.location.reload(true);
-  }, 1000);
-}
-
-// Inizializzazione
-loadSavedState();
-showCacheNotification();
-
-// Controlla se la cache è stata appena pulita
-if (performance.navigation.type === 1) { // Tipo 1 = reload
-  sessionStorage.setItem('cache-cleared', 'true');
-}
-
-clientNameInput.addEventListener('input', (e) => {
-  state.clientName = e.target.value;
-  saveState();
-});
-
-logoInput.addEventListener('change', (e) => {
-  const file = e.target.files[0];
-  if (!file) return;
-  const reader = new FileReader();
-  reader.onload = (ev) => {
-    state.logo = ev.target.result;
-    logoPreview.src = state.logo;
-    logoPreviewWrap.classList.remove('hidden');
-    saveState();
-  };
-  reader.readAsDataURL(file);
-});
-
-// Pulsante forzato aggiornamento cache
-forceUpdateBtn.addEventListener('click', forceCacheUpdate);
-
-function createIconPlus() {
-  const svg = document.createElementNS('http://www.w3.org/2000/svg','svg');
-  svg.setAttribute('width','16'); svg.setAttribute('height','16'); svg.setAttribute('viewBox','0 0 24 24'); svg.setAttribute('fill','none'); svg.setAttribute('stroke','currentColor'); svg.setAttribute('stroke-width','2');
-  const line1 = document.createElementNS('http://www.w3.org/2000/svg','line'); line1.setAttribute('x1','12'); line1.setAttribute('y1','5'); line1.setAttribute('x2','12'); line1.setAttribute('y2','19');
-  const line2 = document.createElementNS('http://www.w3.org/2000/svg','line'); line2.setAttribute('x1','5'); line2.setAttribute('y1','12'); line2.setAttribute('x2','19'); line2.setAttribute('y2','12');
-  svg.appendChild(line1); svg.appendChild(line2);
-  return svg;
-}
-
-function createIconTrash() {
-  const svg = document.createElementNS('http://www.w3.org/2000/svg','svg');
-  svg.setAttribute('width','16'); svg.setAttribute('height','16'); svg.setAttribute('viewBox','0 0 24 24'); svg.setAttribute('fill','none'); svg.setAttribute('stroke','currentColor'); svg.setAttribute('stroke-width','2');
-  const poly = document.createElementNS('http://www.w3.org/2000/svg','polyline'); poly.setAttribute('points','3 6 5 6 21 6');
-  const path = document.createElementNS('http://www.w3.org/2000/svg','path'); path.setAttribute('d','M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2');
-  const l1 = document.createElementNS('http://www.w3.org/2000/svg','line'); l1.setAttribute('x1','10'); l1.setAttribute('y1','11'); l1.setAttribute('x2','10'); l1.setAttribute('y2','17');
-  const l2 = document.createElementNS('http://www.w3.org/2000/svg','line'); l2.setAttribute('x1','14'); l2.setAttribute('y1','11'); l2.setAttribute('x2','14'); l2.setAttribute('y2','17');
-  svg.appendChild(poly); svg.appendChild(path); svg.appendChild(l1); svg.appendChild(l2);
-  return svg;
-}
-
-function dayToDOM(weekIndex, dayIndex) {
-  const day = state.weeks[weekIndex].days[dayIndex];
-  const wrap = document.createElement('div');
-  wrap.className = 'mb-8 pb-8 border-b border-gray-700 last:border-b-0';
-
-  const header = document.createElement('div');
-  header.className = 'flex justify-between items-center mb-4';
-  const h3 = document.createElement('h3');
-  h3.className = 'text-xl font-black text-white uppercase tracking-wide';
-  h3.textContent = day.name;
-
-  header.appendChild(h3);
-  wrap.appendChild(header);
-
-  if (day.exercises.length === 0) {
-    const p = document.createElement('p');
-    p.className = 'text-gray-400 italic ml-4 font-semibold mb-4';
-    p.textContent = '💤 Giorno di riposo';
-    wrap.appendChild(p);
-  } else {
-    const container = document.createElement('div');
-    container.className = 'space-y-4 mb-4';
-    day.exercises.forEach((exercise, exIndex) => {
-      const exWrap = document.createElement('div');
-      exWrap.className = 'bg-gray-800 p-4 rounded-lg border-l-4 border-blue-500 shadow-lg';
-      const grid = document.createElement('div');
-      grid.className = 'grid md:grid-cols-12 gap-3 items-start';
-
-      const nameInput = document.createElement('input');
-      nameInput.type = 'text';
-      nameInput.value = exercise.name;
-      nameInput.placeholder = 'Nome esercizio';
-      nameInput.className = 'md:col-span-4 px-3 py-2 bg-gray-700 text-white border-2 border-gray-600 rounded focus:border-blue-500 focus:outline-none font-semibold placeholder-gray-400';
-      nameInput.addEventListener('input', (e) => updateExercise(weekIndex, dayIndex, exIndex, 'name', e.target.value));
-
-      const setsInput = document.createElement('input');
-      setsInput.type = 'text';
-      setsInput.value = exercise.sets;
-      setsInput.placeholder = 'Serie';
-      setsInput.className = 'md:col-span-2 px-3 py-2 bg-gray-700 text-white border-2 border-gray-600 rounded focus:border-blue-500 focus:outline-none font-semibold placeholder-gray-400';
-      setsInput.addEventListener('input', (e) => updateExercise(weekIndex, dayIndex, exIndex, 'sets', e.target.value));
-
-      const repsInput = document.createElement('input');
-      repsInput.type = 'text';
-      repsInput.value = exercise.reps;
-      repsInput.placeholder = 'Rip.';
-      repsInput.className = 'md:col-span-2 px-3 py-2 bg-gray-700 text-white border-2 border-gray-600 rounded focus:border-blue-500 focus:outline-none font-semibold placeholder-gray-400';
-      repsInput.addEventListener('input', (e) => updateExercise(weekIndex, dayIndex, exIndex, 'reps', e.target.value));
-
-      const restInput = document.createElement('input');
-      restInput.type = 'text';
-      restInput.value = exercise.rest;
-      restInput.placeholder = 'Recupero';
-      restInput.className = 'md:col-span-2 px-3 py-2 bg-gray-700 text-white border-2 border-gray-600 rounded focus:border-blue-500 focus:outline-none font-semibold placeholder-gray-400';
-      restInput.addEventListener('input', (e) => updateExercise(weekIndex, dayIndex, exIndex, 'rest', e.target.value));
-
-      const trashBtn = document.createElement('button');
-      trashBtn.className = 'md:col-span-2 flex items-center justify-center px-3 py-2 bg-red-600 text-white rounded hover:bg-red-700 transition font-bold';
-      const trashIcon = createIconTrash();
-      trashBtn.appendChild(trashIcon);
-      trashBtn.addEventListener('click', () => removeExercise(weekIndex, dayIndex, exIndex));
-
-      const notesInput = document.createElement('input');
-      notesInput.type = 'text';
-      notesInput.value = exercise.notes;
-      notesInput.placeholder = '📝 Note aggiuntive (tempo, tecnica, ecc.)';
-      notesInput.className = 'md:col-span-12 px-3 py-2 bg-gray-700 text-white border-2 border-gray-600 rounded focus:border-blue-500 focus:outline-none font-semibold placeholder-gray-400';
-      notesInput.addEventListener('input', (e) => updateExercise(weekIndex, dayIndex, exIndex, 'notes', e.target.value));
-
-      grid.appendChild(nameInput);
-      grid.appendChild(setsInput);
-      grid.appendChild(repsInput);
-      grid.appendChild(restInput);
-      grid.appendChild(trashBtn);
-      grid.appendChild(notesInput);
-      exWrap.appendChild(grid);
-      container.appendChild(exWrap);
-    });
-    wrap.appendChild(container);
-  }
-
-  const addBtnContainer = document.createElement('div');
-  addBtnContainer.className = 'flex justify-center';
-  const addBtn = document.createElement('button');
-  addBtn.className = 'flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-blue-500 to-blue-600 text-white font-bold rounded-lg hover:from-blue-600 hover:to-blue-700 transition shadow-lg uppercase text-sm border border-blue-400/30';
-  addBtn.appendChild(createIconPlus());
-  const span = document.createElement('span'); span.className = 'ml-2'; span.textContent = 'Aggiungi'; addBtn.appendChild(span);
-  addBtn.addEventListener('click', () => {
-    addExercise(weekIndex, dayIndex);
-  });
-  addBtnContainer.appendChild(addBtn);
-  wrap.appendChild(addBtnContainer);
-
-  return wrap;
-}
-
-function renderWeeks() {
-  weeksContainer.innerHTML = '';
-  state.weeks.forEach((week, weekIndex) => {
-    const weekWrap = document.createElement('div');
-    weekWrap.className = 'bg-gray-800 rounded-xl shadow-2xl p-8 mb-6 border-2 border-blue-500/30';
-
-    const h2 = document.createElement('h2');
-    h2.className = 'text-2xl font-black text-blue-400 mb-6 uppercase tracking-wider flex items-center gap-3';
-    h2.innerHTML = '<span class="text-3xl">🔥</span> Settimana ' + (weekIndex + 1);
-    weekWrap.appendChild(h2);
-
-    week.days.forEach((day, dayIndex) => {
-      weekWrap.appendChild(dayToDOM(weekIndex, dayIndex));
-    });
-
-    weeksContainer.appendChild(weekWrap);
-  });
-}
-
-function addExercise(weekIndex, dayIndex) {
-  const newExercise = { id: Date.now(), name: '', sets: '', reps: '', rest: '', notes: '' };
-  state.weeks[weekIndex].days[dayIndex].exercises.push(newExercise);
-  saveState();
-  renderWeeks();
-}
-
-function updateExercise(weekIndex, dayIndex, exerciseIndex, field, value) {
-  state.weeks[weekIndex].days[dayIndex].exercises[exerciseIndex][field] = value;
-  saveState();
-}
-
-function removeExercise(weekIndex, dayIndex, exerciseIndex) {
-  state.weeks[weekIndex].days[dayIndex].exercises.splice(exerciseIndex, 1);
-  saveState();
-  renderWeeks();
-}
-
-function generatePDFContent() {
-  const logo = state.logo ? `<img src="${state.logo}" class="logo" alt="Logo">` : '';
-  const clientName = state.clientName || '';
-  
-  const weeksHtml = state.weeks.map((week, wIndex) => {
-    // Filtriamo solo i giorni con esercizi
-    const daysWithExercises = week.days.filter(day => day.exercises.length > 0);
-    
-    // Se non ci sono giorni con esercizi, saltiamo questa settimana
-    if (daysWithExercises.length === 0) return '';
-    
-    // Gestione speciale per 3 giorni
-    let daysHtml = '';
-    if (daysWithExercises.length === 3) {
-      // Per 3 giorni: primo giorno occupa la prima riga da solo, altri due nella seconda
-      daysHtml += `
-      <div class="single-day-row">
-        ${createDayHTML(daysWithExercises[0])}
-      </div>
-      <div class="day-row">
-        ${createDayHTML(daysWithExercises[1])}
-        ${createDayHTML(daysWithExercises[2])}
-      </div>`;
-    } else {
-      // Per altri numeri di giorni: creiamo righe normali
-      for (let i = 0; i < daysWithExercises.length; i += 2) {
-        const day1 = daysWithExercises[i];
-        const day2 = daysWithExercises[i + 1];
-        
-        if (i + 1 < daysWithExercises.length) {
-          // Due giorni nella stessa riga
-          daysHtml += `
-          <div class="day-row">
-            ${createDayHTML(day1)}
-            ${createDayHTML(day2)}
-          </div>`;
-        } else {
-          // Ultimo giorno dispari: occupa tutta la riga
-          daysHtml += `
-          <div class="single-day-row">
-            ${createDayHTML(day1)}
-          </div>`;
+        function createIconPlus() {
+            const svg = document.createElementNS('http://www.w3.org/2000/svg','svg');
+            svg.setAttribute('width','16'); svg.setAttribute('height','16'); svg.setAttribute('viewBox','0 0 24 24'); svg.setAttribute('fill','none'); svg.setAttribute('stroke','currentColor'); svg.setAttribute('stroke-width','2');
+            const line1 = document.createElementNS('http://www.w3.org/2000/svg','line'); line1.setAttribute('x1','12'); line1.setAttribute('y1','5'); line1.setAttribute('x2','12'); line1.setAttribute('y2','19');
+            const line2 = document.createElementNS('http://www.w3.org/2000/svg','line'); line2.setAttribute('x1','5'); line2.setAttribute('y1','12'); line2.setAttribute('x2','19'); line2.setAttribute('y2','12');
+            svg.appendChild(line1); svg.appendChild(line2);
+            return svg;
         }
-      }
-    }
-    
-    return `
-    <div class="week">
-      ${state.weeks.length > 1 ? `<div class="week-title">🔥 SETTIMANA ${wIndex + 1}</div>` : ''}
-      ${daysHtml}
-    </div>`;
-  }).join('');
-  
-  function createDayHTML(day) {
-    const exercisesHtml = day.exercises.map(ex => {
-      const name = ex.name || 'Esercizio';
-      const details = [];
-      if (ex.sets) details.push('<strong>Serie:</strong> ' + ex.sets);
-      if (ex.reps) details.push('<strong>Ripetizioni:</strong> ' + ex.reps);
-      if (ex.rest) details.push('<strong>Recupero:</strong> ' + ex.rest);
-      const detailStr = details.join(' | ');
-      const notes = ex.notes ? `<div class="exercise-notes">${ex.notes}</div>` : '';
-      return `
-      <div class="exercise">
-        <div class="exercise-name">${name}</div>
-        <div class="exercise-details">${detailStr}</div>
-        ${notes}
-      </div>`;
-    }).join('');
-    
-    return `
-    <div class="day-square">
-      <div class="day-name">${day.name}</div>
-      <div class="exercises-container">
-        ${exercisesHtml}
-      </div>
-    </div>`;
-  }
 
-  const html = `
-  <!DOCTYPE html>
-  <html>
-  <head>
-    <meta charset="utf-8" />
-    <title>Scheda Allenamento - ${clientName}</title>
-    <style>
-      @page { 
-        margin: 0.5cm; 
-        size: A4; 
-      }
-      body { 
-        font-family: Arial, sans-serif; 
-        margin: 0; 
-        padding: 10px; 
-        font-size: 9px; 
-        background: #f9fafb;
-        width: 100%;
-        box-sizing: border-box;
-      }
-      .header { 
-        display: flex; 
-        justify-content: space-between; 
-        align-items: center; 
-        margin-bottom: 15px; 
-        background: linear-gradient(135deg, #3b82f6 0%, #1e40af 100%); 
-        padding: 12px; 
-        margin: -10px -10px 15px -10px; 
-        border-bottom: 3px solid #2563eb; 
-        box-sizing: border-box;
-      }
-      .logo { 
-        max-width: 80px; 
-        max-height: 50px; 
-        background: white; 
-        padding: 5px; 
-        border-radius: 4px; 
-      }
-      .client-name { 
-        font-size: 20px; 
-        font-weight: 900; 
-        color: white; 
-        text-align: center; 
-        flex-grow: 1; 
-        text-transform: uppercase; 
-        letter-spacing: 1px; 
-      }
-      .week { 
-        margin-bottom: 15px; 
-        page-break-inside: avoid; 
-        width: 100%;
-        box-sizing: border-box;
-      }
-      .week-title { 
-        font-size: 14px; 
-        font-weight: 900; 
-        color: #2563eb; 
-        margin-bottom: 8px; 
-        text-transform: uppercase; 
-        letter-spacing: 0.5px; 
-        padding-bottom: 4px;
-        border-bottom: 1px solid #2563eb;
-      }
-      .day-row {
-        display: flex;
-        gap: 10px;
-        margin-bottom: 10px;
-        width: 100%;
-        box-sizing: border-box;
-      }
-      .single-day-row {
-        margin-bottom: 10px;
-        width: 100%;
-        box-sizing: border-box;
-      }
-      .day-square {
-        flex: 1;
-        min-height: 150px;
-        border: 2px solid #3b82f6;
-        border-radius: 6px;
-        background: white;
-        padding: 8px;
-        display: flex;
-        flex-direction: column;
-        page-break-inside: avoid;
-        box-sizing: border-box;
-        width: 100%;
-      }
-      .single-day-row .day-square {
-        width: 100%;
-      }
-      .day-row .day-square {
-        width: calc(50% - 5px);
-      }
-      .day-name {
-        font-size: 11px;
-        font-weight: 900;
-        color: white;
-        background: linear-gradient(135deg, #3b82f6 0%, #1e40af 100%);
-        padding: 4px 8px;
-        margin-bottom: 8px;
-        border-radius: 3px;
-        text-transform: uppercase;
-        text-align: center;
-      }
-      .exercises-container {
-        flex-grow: 1;
-        overflow: hidden;
-      }
-      .exercise {
-        margin-bottom: 6px;
-        padding: 5px;
-        background-color: #f0f9ff;
-        border-left: 3px solid #3b82f6;
-        border-radius: 3px;
-      }
-      .exercise-name {
-        font-weight: 900;
-        color: #1e293b;
-        font-size: 9px;
-        margin-bottom: 2px;
-        text-transform: uppercase;
-      }
-      .exercise-details {
-        color: #475569;
-        font-size: 8px;
-        line-height: 1.2;
-        font-weight: 600;
-      }
-      .exercise-notes {
-        color: #64748b;
-        font-style: italic;
-        font-size: 7px;
-        margin-top: 2px;
-        padding-top: 2px;
-        border-top: 1px dotted #cbd5e1;
-      }
-      @media print {
-        body {
-          padding: 5px;
-          width: 100%;
+        function createIconTrash() {
+            const svg = document.createElementNS('http://www.w3.org/2000/svg','svg');
+            svg.setAttribute('width','16'); svg.setAttribute('height','16'); svg.setAttribute('viewBox','0 0 24 24'); svg.setAttribute('fill','none'); svg.setAttribute('stroke','currentColor'); svg.setAttribute('stroke-width','2');
+            const poly = document.createElementNS('http://www.w3.org/2000/svg','polyline'); poly.setAttribute('points','3 6 5 6 21 6');
+            const path = document.createElementNS('http://www.w3.org/2000/svg','path'); path.setAttribute('d','M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2');
+            const l1 = document.createElementNS('http://www.w3.org/2000/svg','line'); l1.setAttribute('x1','10'); l1.setAttribute('y1','11'); l1.setAttribute('x2','10'); l1.setAttribute('y2','17');
+            const l2 = document.createElementNS('http://www.w3.org/2000/svg','line'); l2.setAttribute('x1','14'); l2.setAttribute('y1','11'); l2.setAttribute('x2','14'); l2.setAttribute('y2','17');
+            svg.appendChild(poly); svg.appendChild(path); svg.appendChild(l1); svg.appendChild(l2);
+            return svg;
         }
-        .day-row {
-          width: 100%;
-        }
-        .single-day-row {
-          width: 100%;
-        }
-        .day-row .day-square {
-          width: calc(50% - 5px);
-        }
-        .single-day-row .day-square {
-          width: 100%;
-        }
-        .header {
-          margin: -5px -5px 10px -5px;
-          padding: 10px;
-        }
-      }
-    </style>
-  </head>
-  <body>
-    <div class="header">
-      <div style="width:150px;">${logo}</div>
-      <div class="client-name">PIANO ALLENAMENTO ${clientName ? '- ' + clientName.toUpperCase() : ''}</div>
-      <div style="width:150px;"></div>
-    </div>
-    ${weeksHtml || '<p style="color:#6b7280;font-style:italic;text-align:center;">Nessun esercizio aggiunto.</p>'}
-  </body>
-  </html>`;
 
-  return html;
-}
+        function dayToDOM(weekIndex, dayIndex) {
+            const day = state.weeks[weekIndex].days[dayIndex];
+            const wrap = document.createElement('div');
+            wrap.className = 'mb-8 pb-8 border-b border-gray-700 last:border-b-0';
 
-generatePDFBtn.addEventListener('click', () => {
-  const html = generatePDFContent();
-  const printWindow = window.open('', '_blank');
-  if (!printWindow) {
-    alert('Popup bloccato: abilita i popup per generare il PDF.');
-    return;
-  }
-  printWindow.document.write(html);
-  printWindow.document.close();
-  setTimeout(() => printWindow.focus() || printWindow.print(), 300);
-});
+            const header = document.createElement('div');
+            header.className = 'flex justify-between items-center mb-4';
+            const h3 = document.createElement('h3');
+            h3.className = 'text-xl font-black text-white uppercase tracking-wide';
+            h3.textContent = day.name;
 
-// Render iniziale
-renderWeeks();
+            header.appendChild(h3);
+            wrap.appendChild(header);
 
-</script>
+            if (day.exercises.length === 0) {
+                const p = document.createElement('p');
+                p.className = 'text-gray-400 italic ml-4 font-semibold mb-4';
+                p.textContent = '💤 Giorno di riposo';
+                wrap.appendChild(p);
+            } else {
+                const container = document.createElement('div');
+                container.className = 'space-y-4 mb-4';
+                day.exercises.forEach((exercise, exIndex) => {
+                    const exWrap = document.createElement('div');
+                    exWrap.className = 'bg-gray-800 p-4 rounded-lg border-l-4 border-blue-500 shadow-lg';
+                    const grid = document.createElement('div');
+                    grid.className = 'grid md:grid-cols-12 gap-3 items-start';
+
+                    const nameInput = document.createElement('input');
+                    nameInput.type = 'text';
+                    nameInput.value = exercise.name;
+                    nameInput.placeholder = 'Nome esercizio';
+                    nameInput.className = 'md:col-span-4 px-3 py-2 bg-gray-700 text-white border-2 border-gray-600 rounded focus:border-blue-500 focus:outline-none font-semibold placeholder-gray-400';
+                    nameInput.addEventListener('input', (e) => updateExercise(weekIndex, dayIndex, exIndex, 'name', e.target.value));
+
+                    const setsInput = document.createElement('input');
+                    setsInput.type = 'text';
+                    setsInput.value = exercise.sets;
+                    setsInput.placeholder = 'Serie';
+                    setsInput.className = 'md:col-span-2 px-3 py-2 bg-gray-700 text-white border-2 border-gray-600 rounded focus:border-blue-500 focus:outline-none font-semibold placeholder-gray-400';
+                    setsInput.addEventListener('input', (e) => updateExercise(weekIndex, dayIndex, exIndex, 'sets', e.target.value));
+
+                    const repsInput = document.createElement('input');
+                    repsInput.type = 'text';
+                    repsInput.value = exercise.reps;
+                    repsInput.placeholder = 'Rip.';
+                    repsInput.className = 'md:col-span-2 px-3 py-2 bg-gray-700 text-white border-2 border-gray-600 rounded focus:border-blue-500 focus:outline-none font-semibold placeholder-gray-400';
+                    repsInput.addEventListener('input', (e) => updateExercise(weekIndex, dayIndex, exIndex, 'reps', e.target.value));
+
+                    const restInput = document.createElement('input');
+                    restInput.type = 'text';
+                    restInput.value = exercise.rest;
+                    restInput.placeholder = 'Recupero';
+                    restInput.className = 'md:col-span-2 px-3 py-2 bg-gray-700 text-white border-2 border-gray-600 rounded focus:border-blue-500 focus:outline-none font-semibold placeholder-gray-400';
+                    restInput.addEventListener('input', (e) => updateExercise(weekIndex, dayIndex, exIndex, 'rest', e.target.value));
+
+                    const trashBtn = document.createElement('button');
+                    trashBtn.className = 'md:col-span-2 flex items-center justify-center px-3 py-2 bg-red-600 text-white rounded hover:bg-red-700 transition font-bold';
+                    const trashIcon = createIconTrash();
+                    trashBtn.appendChild(trashIcon);
+                    trashBtn.addEventListener('click', () => removeExercise(weekIndex, dayIndex, exIndex));
+
+                    const notesInput = document.createElement('input');
+                    notesInput.type = 'text';
+                    notesInput.value = exercise.notes;
+                    notesInput.placeholder = '📝 Note aggiuntive (tempo, tecnica, ecc.)';
+                    notesInput.className = 'md:col-span-12 px-3 py-2 bg-gray-700 text-white border-2 border-gray-600 rounded focus:border-blue-500 focus:outline-none font-semibold placeholder-gray-400';
+                    notesInput.addEventListener('input', (e) => updateExercise(weekIndex, dayIndex, exIndex, 'notes', e.target.value));
+
+                    grid.appendChild(nameInput);
+                    grid.appendChild(setsInput);
+                    grid.appendChild(repsInput);
+                    grid.appendChild(restInput);
+                    grid.appendChild(trashBtn);
+                    grid.appendChild(notesInput);
+                    exWrap.appendChild(grid);
+                    container.appendChild(exWrap);
+                });
+                wrap.appendChild(container);
+            }
+
+            const addBtnContainer = document.createElement('div');
+            addBtnContainer.className = 'flex justify-center';
+            const addBtn = document.createElement('button');
+            addBtn.className = 'flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-blue-500 to-blue-600 text-white font-bold rounded-lg hover:from-blue-600 hover:to-blue-700 transition shadow-lg uppercase text-sm border border-blue-400/30';
+            addBtn.appendChild(createIconPlus());
+            const span = document.createElement('span'); span.className = 'ml-2'; span.textContent = 'Aggiungi'; addBtn.appendChild(span);
+            addBtn.addEventListener('click', () => {
+                addExercise(weekIndex, dayIndex);
+            });
+            addBtnContainer.appendChild(addBtn);
+            wrap.appendChild(addBtnContainer);
+
+            return wrap;
+        }
+
+        function renderWeeks() {
+            weeksContainer.innerHTML = '';
+            state.weeks.forEach((week, weekIndex) => {
+                const weekWrap = document.createElement('div');
+                weekWrap.className = 'bg-gray-800 rounded-xl shadow-2xl p-8 mb-6 border-2 border-blue-500/30';
+
+                const h2 = document.createElement('h2');
+                h2.className = 'text-2xl font-black text-blue-400 mb-6 uppercase tracking-wider flex items-center gap-3';
+                h2.innerHTML = '<span class="text-3xl">🔥</span> Settimana ' + (weekIndex + 1);
+                weekWrap.appendChild(h2);
+
+                week.days.forEach((day, dayIndex) => {
+                    weekWrap.appendChild(dayToDOM(weekIndex, dayIndex));
+                });
+
+                weeksContainer.appendChild(weekWrap);
+            });
+        }
+
+        function addExercise(weekIndex, dayIndex) {
+            const newExercise = { id: Date.now(), name: '', sets: '', reps: '', rest: '', notes: '' };
+            state.weeks[weekIndex].days[dayIndex].exercises.push(newExercise);
+            saveState();
+            renderWeeks();
+        }
+
+        function updateExercise(weekIndex, dayIndex, exerciseIndex, field, value) {
+            state.weeks[weekIndex].days[dayIndex].exercises[exerciseIndex][field] = value;
+            saveState();
+        }
+
+        function removeExercise(weekIndex, dayIndex, exerciseIndex) {
+            state.weeks[weekIndex].days[dayIndex].exercises.splice(exerciseIndex, 1);
+            saveState();
+            renderWeeks();
+        }
+
+        function generatePDFContent() {
+            const logo = state.logo ? `<img src="${state.logo}" class="logo" alt="Logo">` : '';
+            const clientName = state.clientName || '';
+            
+            const weeksHtml = state.weeks.map((week, wIndex) => {
+                // Filtriamo solo i giorni con esercizi
+                const daysWithExercises = week.days.filter(day => day.exercises.length > 0);
+                
+                // Se non ci sono giorni con esercizi, saltiamo questa settimana
+                if (daysWithExercises.length === 0) return '';
+                
+                // Gestione speciale per 3 giorni
+                let daysHtml = '';
+                if (daysWithExercises.length === 3) {
+                    // Per 3 giorni: primo giorno occupa la prima riga da solo, altri due nella seconda
+                    daysHtml += `
+                    <div class="single-day-row">
+                        ${createDayHTML(daysWithExercises[0])}
+                    </div>
+                    <div class="day-row">
+                        ${createDayHTML(daysWithExercises[1])}
+                        ${createDayHTML(daysWithExercises[2])}
+                    </div>`;
+                } else {
+                    // Per altri numeri di giorni: creiamo righe normali
+                    for (let i = 0; i < daysWithExercises.length; i += 2) {
+                        const day1 = daysWithExercises[i];
+                        const day2 = daysWithExercises[i + 1];
+                        
+                        if (i + 1 < daysWithExercises.length) {
+                            // Due giorni nella stessa riga
+                            daysHtml += `
+                            <div class="day-row">
+                                ${createDayHTML(day1)}
+                                ${createDayHTML(day2)}
+                            </div>`;
+                        } else {
+                            // Ultimo giorno dispari: occupa tutta la riga
+                            daysHtml += `
+                            <div class="single-day-row">
+                                ${createDayHTML(day1)}
+                            </div>`;
+                        }
+                    }
+                }
+                
+                return `
+                <div class="week">
+                    ${state.weeks.length > 1 ? `<div class="week-title">🔥 SETTIMANA ${wIndex + 1}</div>` : ''}
+                    ${daysHtml}
+                </div>`;
+            }).join('');
+            
+            function createDayHTML(day) {
+                const exercisesHtml = day.exercises.map(ex => {
+                    const name = ex.name || 'Esercizio';
+                    const details = [];
+                    if (ex.sets) details.push('<strong>Serie:</strong> ' + ex.sets);
+                    if (ex.reps) details.push('<strong>Ripetizioni:</strong> ' + ex.reps);
+                    if (ex.rest) details.push('<strong>Recupero:</strong> ' + ex.rest);
+                    const detailStr = details.join(' | ');
+                    const notes = ex.notes ? `<div class="exercise-notes">${ex.notes}</div>` : '';
+                    return `
+                    <div class="exercise">
+                        <div class="exercise-name">${name}</div>
+                        <div class="exercise-details">${detailStr}</div>
+                        ${notes}
+                    </div>`;
+                }).join('');
+                
+                return `
+                <div class="day-square">
+                    <div class="day-name">${day.name}</div>
+                    <div class="exercises-container">
+                        ${exercisesHtml}
+                    </div>
+                </div>`;
+            }
+
+            const html = `
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <meta charset="utf-8" />
+                <title>Scheda Allenamento - ${clientName}</title>
+                <style>
+                    @page { 
+                        margin: 0.5cm; 
+                        size: A4; 
+                    }
+                    body { 
+                        font-family: Arial, sans-serif; 
+                        margin: 0; 
+                        padding: 10px; 
+                        font-size: 9px; 
+                        background: #f9fafb;
+                        width: 100%;
+                        box-sizing: border-box;
+                    }
+                    .header { 
+                        display: flex; 
+                        justify-content: space-between; 
+                        align-items: center; 
+                        margin-bottom: 15px; 
+                        background: linear-gradient(135deg, #3b82f6 0%, #1e40af 100%); 
+                        padding: 12px; 
+                        margin: -10px -10px 15px -10px; 
+                        border-bottom: 3px solid #2563eb; 
+                        box-sizing: border-box;
+                    }
+                    .logo { 
+                        max-width: 80px; 
+                        max-height: 50px; 
+                        background: white; 
+                        padding: 5px; 
+                        border-radius: 4px; 
+                    }
+                    .client-name { 
+                        font-size: 20px; 
+                        font-weight: 900; 
+                        color: white; 
+                        text-align: center; 
+                        flex-grow: 1; 
+                        text-transform: uppercase; 
+                        letter-spacing: 1px; 
+                    }
+                    .week { 
+                        margin-bottom: 15px; 
+                        page-break-inside: avoid; 
+                        width: 100%;
+                        box-sizing: border-box;
+                    }
+                    .week-title { 
+                        font-size: 14px; 
+                        font-weight: 900; 
+                        color: #2563eb; 
+                        margin-bottom: 8px; 
+                        text-transform: uppercase; 
+                        letter-spacing: 0.5px; 
+                        padding-bottom: 4px;
+                        border-bottom: 1px solid #2563eb;
+                    }
+                    .day-row {
+                        display: flex;
+                        gap: 10px;
+                        margin-bottom: 10px;
+                        width: 100%;
+                        box-sizing: border-box;
+                    }
+                    .single-day-row {
+                        margin-bottom: 10px;
+                        width: 100%;
+                        box-sizing: border-box;
+                    }
+                    .day-square {
+                        flex: 1;
+                        min-height: 150px;
+                        border: 2px solid #3b82f6;
+                        border-radius: 6px;
+                        background: white;
+                        padding: 8px;
+                        display: flex;
+                        flex-direction: column;
+                        page-break-inside: avoid;
+                        box-sizing: border-box;
+                        width: 100%;
+                    }
+                    .single-day-row .day-square {
+                        width: 100%;
+                    }
+                    .day-row .day-square {
+                        width: calc(50% - 5px);
+                    }
+                    .day-name {
+                        font-size: 11px;
+                        font-weight: 900;
+                        color: white;
+                        background: linear-gradient(135deg, #3b82f6 0%, #1e40af 100%);
+                        padding: 4px 8px;
+                        margin-bottom: 8px;
+                        border-radius: 3px;
+                        text-transform: uppercase;
+                        text-align: center;
+                    }
+                    .exercises-container {
+                        flex-grow: 1;
+                        overflow: hidden;
+                    }
+                    .exercise {
+                        margin-bottom: 6px;
+                        padding: 5px;
+                        background-color: #f0f9ff;
+                        border-left: 3px solid #3b82f6;
+                        border-radius: 3px;
+                    }
+                    .exercise-name {
+                        font-weight: 900;
+                        color: #1e293b;
+                        font-size: 9px;
+                        margin-bottom: 2px;
+                        text-transform: uppercase;
+                    }
+                    .exercise-details {
+                        color: #475569;
+                        font-size: 8px;
+                        line-height: 1.2;
+                        font-weight: 600;
+                    }
+                    .exercise-notes {
+                        color: #64748b;
+                        font-style: italic;
+                        font-size: 7px;
+                        margin-top: 2px;
+                        padding-top: 2px;
+                        border-top: 1px dotted #cbd5e1;
+                    }
+                    @media print {
+                        body {
+                            padding: 5px;
+                            width: 100%;
+                        }
+                        .day-row {
+                            width: 100%;
+                        }
+                        .single-day-row {
+                            width: 100%;
+                        }
+                        .day-row .day-square {
+                            width: calc(50% - 5px);
+                        }
+                        .single-day-row .day-square {
+                            width: 100%;
+                        }
+                        .header {
+                            margin: -5px -5px 10px -5px;
+                            padding: 10px;
+                        }
+                    }
+                </style>
+            </head>
+            <body>
+                <div class="header">
+                    <div style="width:150px;">${logo}</div>
+                    <div class="client-name">PIANO ALLENAMENTO ${clientName ? '- ' + clientName.toUpperCase() : ''}</div>
+                    <div style="width:150px;"></div>
+                </div>
+                ${weeksHtml || '<p style="color:#6b7280;font-style:italic;text-align:center;">Nessun esercizio aggiunto.</p>'}
+            </body>
+            </html>`;
+
+            return html;
+        }
+
+        generatePDFBtn.addEventListener('click', () => {
+            const html = generatePDFContent();
+            const printWindow = window.open('', '_blank');
+            if (!printWindow) {
+                alert('Popup bloccato: abilita i popup per generare il PDF.');
+                return;
+            }
+            printWindow.document.write(html);
+            printWindow.document.close();
+            setTimeout(() => printWindow.focus() || printWindow.print(), 300);
+        });
+
+        // Render iniziale
+        renderWeeks();
+    </script>
 </body>
 </html>
