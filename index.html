@@ -809,9 +809,19 @@
                 alert('Popup bloccato: abilita i popup per generare il PDF.');
                 return;
             }
+            
+            // Scrivi il contenuto
             printWindow.document.write(html);
             printWindow.document.close();
-            setTimeout(() => printWindow.focus() || printWindow.print(), 300);
+            
+            // Attendi che il documento sia completamente caricato prima di stampare
+            printWindow.addEventListener('load', () => {
+                // Timeout più lungo per documenti grandi (2 secondi invece di 300ms)
+                setTimeout(() => {
+                    printWindow.focus();
+                    printWindow.print();
+                }, 2000);
+            });
         });
 
         // Render iniziale
